@@ -55,8 +55,10 @@ The dictation key is `fn` by default and rebindable in Settings → General
 ## What you get
 
 **See your words as you speak.** Voxtral is a streaming model, so the pill shows
-a live transcript while you talk. The final, authoritative text is decoded once
-more at key-up and inserted — the preview can never cost you a word.
+a live transcript while you talk — and because it has already decoded everything
+by the time you let go, the text lands at your cursor in well under a second,
+however long you spoke. If the live session ever fails, the recording is
+transcribed again from disk, so a glitch can never cost you a word.
 
 **It never loses your words.** Audio goes to disk from the first millisecond, so
 a crash, a `kill -9`, or a flat battery costs you nothing — the recording is
@@ -68,8 +70,9 @@ listening until you actually stop.
 Every transcript passes through your correction rules before it is inserted, so
 "cooper netties" becomes "Kubernetes" every time.
 
-**Long dictations work.** Ten minutes if you want; the audio is transcribed in
-segments so accuracy holds over the whole recording.
+**Long dictations work.** Ten minutes if you want. The encoder runs with the
+sliding attention window it was trained with, so accuracy holds from the first
+sentence to the last.
 
 ## Install
 
@@ -129,9 +132,10 @@ key up ──▶ WAV ──▶ local Voxtral server (MLX, 127.0.0.1:48765) ─�
 
 The model server is a small Python process (`server/voxi_server.py`) that loads
 [Voxtral-Mini-4B-Realtime](https://huggingface.co/mistralai/Voxtral-Mini-4B-Realtime-2602)
-in 6-bit via [voxmlx](https://github.com/awni/voxmlx) and answers two things:
-a batch `/transcribe` and a streaming session used for the live caption. It runs
-at roughly 7× realtime on an M-series Mac and stays warm between dictations.
+in 6-bit via [voxmlx](https://github.com/awni/voxmlx). One decode path serves
+both the live caption (audio streamed in as you talk) and the file-based
+`/transcribe` fallback. It runs at roughly 7× realtime on an M-series Mac and
+stays warm between dictations.
 
 A few decisions worth knowing about, because they are what make it feel solid:
 
@@ -141,9 +145,11 @@ A few decisions worth knowing about, because they are what make it feel solid:
 - **The mic drains one buffer past the stop**, because the audio tap only
   delivers whole ~100 ms chunks and tearing down immediately threw away the
   tail of your last word.
-- **Long audio is decoded in ~20 s segments, cut at pauses.** The encoder's
-  sliding attention window isn't applied by the MLX port, so a single long pass
-  degrades after half a minute; segmenting keeps every window in-distribution.
+- **The encoder's attention window is bounded on purpose.** The MLX port
+  allocates an effectively unlimited cache; past the 750-frame window Voxtral was
+  trained with, the encoder drifts and the model goes silent after ~40 s.
+  `stream_session.py` bounds the cache to the trained window — the single
+  change that makes long dictations work, live or from a file.
 - **Insertion is a ladder**: Accessibility API first (no clipboard involved),
   then a guarded paste that restores your clipboard, then a "copied — press ⌘V"
   chip. It never blind-pastes into an app that stole focus mid-flight.
@@ -155,7 +161,7 @@ A few decisions worth knowing about, because they are what make it feel solid:
 
 ```bash
 ./scripts/install-server.sh   # once
-./scripts/build-app.sh        # SwiftPM build, ad-hoc sign, install to /Applications
+./scripts/build-app.sh        # SwiftPM build, sign, install to /Applications
 ./scripts/test.sh             # swift test on JotCore
 ```
 
