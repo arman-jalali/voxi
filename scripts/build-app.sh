@@ -53,7 +53,13 @@ PLIST
 codesign --force --sign - --entitlements App/Jot.entitlements "$APP"
 
 INSTALL="/Applications/Voxi.app"
-if pgrep -x Voxi >/dev/null; then osascript -e 'tell application "Voxi" to quit' 2>/dev/null; sleep 1; pkill -x Voxi 2>/dev/null || true; fi
+# Quit a running copy so the bundle can be replaced. Every step here may
+# legitimately fail (not running, not scriptable) — none may abort the install.
+if pgrep -x Voxi >/dev/null; then
+  osascript -e 'tell application "Voxi" to quit' >/dev/null 2>&1 || true
+  sleep 1
+  pkill -x Voxi 2>/dev/null || true
+fi
 rm -rf "$INSTALL"
 ditto "$APP" "$INSTALL"
 rm -rf "$ROOT/.build/staging"

@@ -36,75 +36,25 @@ prompt_tokens, n_delay_tokens = _build_prompt_tokens(sp)
 print(f"[voxi-server] model loaded in {time.time() - t0:.1f}s", flush=True)
 
 
-# The audio encoder is configured with sliding_window=750 but voxmlx applies a
-# plain full causal mask, so audio longer than the trained window drifts out of
-# distribution and the model starts emitting blanks — long dictations came back
-# truncated to roughly the first half. Chunking keeps every segment inside the
-# window the encoder was actually trained on.
 SAMPLE_RATE = 16000
-CHUNK_TARGET_S = 20.0   # nominal segment length
-CHUNK_MAX_S = 24.0      # never exceed this in one generate() call
-SEARCH_S = 4.0          # hunt for a pause this far back from the target
-TAIL_PAD_S = 0.5        # trailing silence so the last word gets flushed
-
-
-def _decode(samples: np.ndarray) -> str:
-    """Run one segment through the model."""
-    padded = np.concatenate([samples, np.zeros(int(TAIL_PAD_S * SAMPLE_RATE), dtype=np.float32)])
-    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-    tmp.close()
-    try:
-        sf.write(tmp.name, padded, SAMPLE_RATE)
-        tokens = generate(
-            model,
-            tmp.name,
-            list(prompt_tokens),
-            n_delay_tokens=n_delay_tokens,
-            temperature=0.0,
-            eos_token_id=sp.eos_id,
-        )
-        return sp.decode(tokens, special_token_policy=SpecialTokenPolicy.IGNORE).strip()
-    finally:
-        os.unlink(tmp.name)
-
-
-def _split_points(audio: np.ndarray) -> list:
-    """Segment boundaries, each placed at the quietest point near the target so
-    a cut lands in a pause rather than mid-word."""
-    target = int(CHUNK_TARGET_S * SAMPLE_RATE)
-    hard = int(CHUNK_MAX_S * SAMPLE_RATE)
-    search = int(SEARCH_S * SAMPLE_RATE)
-    win = int(0.1 * SAMPLE_RATE)  # 100ms energy window
-
-    bounds = [0]
-    while len(audio) - bounds[-1] > hard:
-        start = bounds[-1]
-        lo, hi = start + target - search, min(start + target, len(audio) - win)
-        region = audio[lo:hi + win]
-        if len(region) <= win:
-            bounds.append(min(start + target, len(audio)))
-            continue
-        # RMS per 100ms window; cut at the quietest one.
-        n = (len(region) - win) // win
-        energies = [float(np.sqrt(np.mean(region[i * win:i * win + win] ** 2))) for i in range(max(n, 1))]
-        bounds.append(lo + int(np.argmin(energies)) * win + win // 2)
-    bounds.append(len(audio))
-    return bounds
 
 
 def transcribe_file(path: str) -> str:
+    """Batch path: the whole file through one StreamSession. Same bounded-window
+    encoder as the live caption, so long audio neither truncates nor needs
+    seams, and there is one decode path to trust."""
     audio, sr = sf.read(path, dtype="float32")
     if audio.ndim > 1:
         audio = audio.mean(axis=1)
     if sr != SAMPLE_RATE:  # capture is already 16k; guard anyway
         n_out = int(len(audio) / sr * SAMPLE_RATE)
         audio = np.interp(np.linspace(0, len(audio) - 1, n_out), np.arange(len(audio)), audio).astype(np.float32)
-
-    bounds = _split_points(audio)
-    if len(bounds) > 2:
-        print(f"[voxi-server] {len(audio) / SAMPLE_RATE:.1f}s -> {len(bounds) - 1} segments", flush=True)
-    parts = [_decode(audio[bounds[i]:bounds[i + 1]]) for i in range(len(bounds) - 1)]
-    return " ".join(p for p in parts if p)
+    session = StreamSession(model, sp)
+    pcm = (np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes()
+    step = SAMPLE_RATE * 2 * 5  # 5s per feed keeps peak memory flat on long files
+    for i in range(0, len(pcm), step):
+        session.feed(pcm[i:i + step])
+    return session.finish()
 
 
 # --- live preview sessions -------------------------------------------------

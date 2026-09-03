@@ -22,6 +22,25 @@ public struct LocalTranscriptionService: TranscriptionServicing {
     }
 
     public func transcribe(audioURL: URL, durationSeconds: Double, context: DictationContext) async throws -> TranscriptionResult {
+        // Stream-first: the live session has already decoded everything up to
+        // key-up, so its flushed transcript is ready in well under a second —
+        // re-decoding the whole recording from scratch cost a 60s dictation
+        // ~9s of waiting at key-up. The batch path below remains the fallback
+        // (no live session, stream error, or a result too short for the audio).
+        if let live = await LivePreview.shared.takeFinalText(timeout: 6) {
+            let trimmed = live.trimmingCharacters(in: .whitespacesAndNewlines)
+            if Self.plausible(trimmed, durationSeconds: durationSeconds) {
+                Log.transcription.info("using live-stream transcript (\(trimmed.count) chars for \(String(format: "%.1f", durationSeconds))s)")
+                let rules = DictionaryStore().replacementRules()
+                return TranscriptionResult(
+                    rawTranscript: trimmed,
+                    cleanedTranscript: ReplacementEngine.apply(rules, to: trimmed),
+                    modelID: Self.modelID + "/stream"
+                )
+            }
+            Log.transcription.info("live-stream transcript rejected (\(trimmed.count) chars for \(String(format: "%.1f", durationSeconds))s) — falling back to batch")
+        }
+
         let wavURL = audioURL.deletingLastPathComponent().appendingPathComponent("audio.wav")
         let encoded = try WAVEncoder.encode(cafURL: audioURL, wavURL: wavURL)
         Log.transcription.info("WAV \(encoded.byteCount) bytes in \(Int(encoded.encodeSeconds * 1000))ms")
@@ -53,6 +72,15 @@ public struct LocalTranscriptionService: TranscriptionServicing {
             cleanedTranscript: text,
             modelID: Self.modelID
         )
+    }
+
+    /// Speech runs ~12–15 chars/s; a stream that silently went quiet mid-way
+    /// comes in far under that. 2 chars/s is a floor no real dictation misses,
+    /// while still catching a transcript that covers only a fraction of the audio.
+    static func plausible(_ text: String, durationSeconds: Double) -> Bool {
+        guard !text.isEmpty else { return false }
+        guard durationSeconds > 3 else { return true }
+        return Double(text.count) >= 2 * durationSeconds
     }
 
     private func transcribeWithRetry(wavData: Data, deadline: TimeInterval) async throws -> String {

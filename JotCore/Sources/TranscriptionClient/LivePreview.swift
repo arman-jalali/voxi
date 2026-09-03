@@ -27,12 +27,17 @@ public final class LivePreview: @unchecked Sendable {
     private var active = false
     private var inFlight = false
     private var lastFlush = Date.distantPast
+    /// The stream's final transcript for the session that just ended, produced
+    /// by end(). Consumed exactly once by takeFinalText() so a later retry from
+    /// History can never pick up a stale session's words.
+    private var finalTask: Task<String?, Never>?
 
     private init() {}
 
     /// Opens a session. Cheap and fire-and-forget — recording never waits on it.
     public func begin() {
         queue.async {
+            self.finalTask = nil
             self.buffer.removeAll(keepingCapacity: true)
             self.active = false
             self.inFlight = false
@@ -55,18 +60,44 @@ public final class LivePreview: @unchecked Sendable {
         }
     }
 
-    /// Closes the session. The final inserted text does NOT come from here.
+    /// Closes the session and flushes the tail. The finished transcript is
+    /// parked for takeFinalText(); the batch path decides whether to use it.
     public func end() {
         queue.async {
             guard self.active else { return }
             self.active = false
             let tail = self.buffer
             self.buffer.removeAll(keepingCapacity: true)
-            Task { [weak self] in
-                guard let self else { return }
-                if !tail.isEmpty { _ = await self.client.streamFeed(tail) }
-                _ = await self.client.streamFinish()
+            let client = self.client
+            self.finalTask = Task {
+                if !tail.isEmpty { _ = await client.streamFeed(tail) }
+                return await client.streamFinish()
             }
+        }
+    }
+
+    /// The stream's final transcript for the session that just ended, or nil if
+    /// there was no live session, it failed, or it isn't done within `timeout`.
+    /// Take-once: a second call returns nil.
+    public func takeFinalText(timeout: TimeInterval) async -> String? {
+        let task: Task<String?, Never>? = await withCheckedContinuation { cont in
+            queue.async {
+                let t = self.finalTask
+                self.finalTask = nil
+                cont.resume(returning: t)
+            }
+        }
+        guard let task else { return nil }
+        let deadline = Task<String?, Never> {
+            try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+            return nil
+        }
+        return await withTaskGroup(of: String?.self) { group in
+            group.addTask { await task.value }
+            group.addTask { await deadline.value }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
         }
     }
 

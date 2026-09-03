@@ -3,14 +3,13 @@
 Adapted from voxmlx's `stream_transcribe` mic loop, but driven by audio pushed
 in from the app instead of a sounddevice callback. One session per dictation.
 
-This is the LIVE PREVIEW path only — the text it produces is shown in the pill
-while the user talks. The authoritative transcript that actually gets inserted
-still comes from the batch endpoint at key-up, so a streaming glitch can never
-cost someone their words.
+Used two ways: fed incrementally while the user talks (the pill's live caption,
+and — once flushed at key-up — the transcript that gets inserted), and fed a
+whole file at once by the batch /transcribe endpoint. Both go through the same
+bounded-window encoder, so there is exactly one decode path to trust.
 
-Unlike the batch path, incremental encoding uses the encoder's rotating KV
-cache, which bounds attention to the window the encoder was trained on — so
-this path does not need the chunking the batch path does.
+The app still falls back to /transcribe when the live session failed or came
+back implausibly short, so a streaming glitch can never cost someone their words.
 """
 
 import threading
@@ -22,7 +21,16 @@ from voxmlx.audio import SAMPLES_PER_TOKEN, log_mel_spectrogram_step
 from voxmlx.cache import RotatingKVCache
 
 N_LEFT_PAD_TOKENS = 32
+# Trailing silence fed at finish(): the model emits text ~6 tokens behind the
+# audio, so without it the last word is cut ("the issu"). Matches voxmlx's pad.
+N_RIGHT_PAD_TOKENS = 17
 SLIDING_WINDOW = 8192
+# The audio encoder was trained with a 750-frame sliding window (config
+# `sliding_window`). voxmlx's encode_step allocates a 100k-frame cache when
+# handed None — effectively unbounded — and past the trained window the
+# encoder drifts and the model emits blanks, so long dictations went silent
+# after ~40s. Bounding the cache ourselves restores the trained behaviour.
+ENCODER_WINDOW = 750
 
 
 class StreamSession:
@@ -54,7 +62,7 @@ class StreamSession:
         self.audio_tail = None
         self.conv1_tail = None
         self.conv2_tail = None
-        self.encoder_cache = None
+        self.encoder_cache = [RotatingKVCache(ENCODER_WINDOW) for _ in model.encoder.layers]
         self.ds_buf = None
 
         self.pending_audio = np.zeros(0, dtype=np.float32)
@@ -150,11 +158,11 @@ class StreamSession:
             return self.text
 
     def finish(self) -> str:
-        """Flush trailing audio and return the final preview text."""
+        """Flush trailing audio (plus right padding) and return the final text."""
         with self.lock:
-            if len(self.pending_audio) > 0:
-                pad = SAMPLES_PER_TOKEN - (len(self.pending_audio) % SAMPLES_PER_TOKEN)
-                self.pending_audio = np.append(self.pending_audio, np.zeros(pad, dtype=np.float32))
-                self._encode_pending()
+            pad = (SAMPLES_PER_TOKEN - (len(self.pending_audio) % SAMPLES_PER_TOKEN)) % SAMPLES_PER_TOKEN
+            pad += N_RIGHT_PAD_TOKENS * SAMPLES_PER_TOKEN
+            self.pending_audio = np.append(self.pending_audio, np.zeros(pad, dtype=np.float32))
+            self._encode_pending()
             self._decode_available()
-            return self.text
+            return self.text.strip()
