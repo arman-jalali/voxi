@@ -6,8 +6,10 @@ Loads Voxtral-Mini-4B-Realtime (MLX, 6-bit) once and serves:
     GET  /health              -> {"ok": true, "model": "..."}   (200 once warm)
     POST /transcribe          -> {"text": "..."}                (body: WAV bytes)
 
-Single-threaded on purpose: one dictation at a time, no queueing complexity.
-Runs on 127.0.0.1 only — audio never leaves the machine.
+Threaded HTTP so an idle keep-alive connection can never block another
+request (URLSession holds idle connections open; a single-threaded server
+would stall every other call behind it). Model work itself is serialized on
+one lock — one dictation at a time. Runs on 127.0.0.1 only.
 """
 
 import json
@@ -17,7 +19,7 @@ import tempfile
 import threading
 import time
 import traceback
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MODEL = os.environ.get("VOXI_MODEL", "mlx-community/Voxtral-Mini-4B-Realtime-6bit")
 PORT = int(os.environ.get("VOXI_PORT", "48765"))
@@ -37,6 +39,9 @@ print(f"[voxi-server] model loaded in {time.time() - t0:.1f}s", flush=True)
 
 
 SAMPLE_RATE = 16000
+# MLX work is single-GPU: every model call (batch or stream) takes this lock so
+# concurrent HTTP threads never interleave inside the model.
+_model_lock = threading.Lock()
 
 
 def transcribe_file(path: str) -> str:
@@ -49,12 +54,13 @@ def transcribe_file(path: str) -> str:
     if sr != SAMPLE_RATE:  # capture is already 16k; guard anyway
         n_out = int(len(audio) / sr * SAMPLE_RATE)
         audio = np.interp(np.linspace(0, len(audio) - 1, n_out), np.arange(len(audio)), audio).astype(np.float32)
-    session = StreamSession(model, sp)
     pcm = (np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes()
     step = SAMPLE_RATE * 2 * 5  # 5s per feed keeps peak memory flat on long files
-    for i in range(0, len(pcm), step):
-        session.feed(pcm[i:i + step])
-    return session.finish()
+    with _model_lock:
+        session = StreamSession(model, sp)
+        for i in range(0, len(pcm), step):
+            session.feed(pcm[i:i + step])
+        return session.finish()
 
 
 # --- live preview sessions -------------------------------------------------
@@ -76,7 +82,8 @@ def stream_feed(pcm: bytes):
         s = _stream
     if s is None:
         return {"error": "no active session"}, 409
-    return {"text": s.feed(pcm)}, 200
+    with _model_lock:
+        return {"text": s.feed(pcm)}, 200
 
 
 def stream_finish():
@@ -85,7 +92,8 @@ def stream_finish():
         s, _stream = _stream, None
     if s is None:
         return {"error": "no active session"}, 409
-    return {"text": s.finish()}, 200
+    with _model_lock:
+        return {"text": s.finish()}, 200
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -174,6 +182,7 @@ if __name__ == "__main__":
     except Exception:
         traceback.print_exc()
 
-    server = HTTPServer(("127.0.0.1", PORT), Handler)
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    server.daemon_threads = True
     print(f"[voxi-server] ready on http://127.0.0.1:{PORT}", flush=True)
     server.serve_forever()
