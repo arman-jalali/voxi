@@ -6,17 +6,10 @@ External contributions are welcome: bug reports, fixes, and features are all acc
 
 There are just a few small guidelines you need to follow.
 
-## Contributor License Agreement
+## Licensing of contributions
 
-Contributions to this project must be accompanied by a Contributor License
-Agreement (CLA). You (or your employer) retain the copyright to your
-contribution; this simply gives us permission to use and redistribute your
-contributions as part of the project. Head over to
-<https://cla.developers.google.com/> to see your current agreements on file or
-to sign a new one.
-
-You generally only need to submit a CLA once, so if you've already submitted one
-(even if it was for a different project), you probably don't need to do it again.
+By opening a pull request you agree that your contribution is licensed under
+the project's [Apache License 2.0](LICENSE). No CLA is required.
 
 ## Code Reviews
 
@@ -27,18 +20,18 @@ information on using pull requests.
 
 ## Community Guidelines
 
-This project follows
-[Google's Open Source Community Guidelines](https://opensource.google/conduct/).
+Be kind, be constructive, assume good faith. Harassment of any kind is not
+tolerated; maintainers may remove comments or contributors that break this.
 
 ## Ground rules
 
 1. **Cleanroom policy.** GPL-licensed projects in this space may be *studied for
    behavior* — never copied. Do not port, translate, or paraphrase their code into
-   this repository. Signing the CLA above affirms you have the right to contribute
-   the code; this rule is the stricter provenance bar that goes with it.
+   this repository. You must have the right to contribute the code you submit;
+   this rule is the stricter provenance bar that goes with it.
 2. **No secrets, ever.** No API keys, tokens, or signing material in code, fixtures,
-   tests, or CI files. The app takes the user's own Gemini key at runtime and stores
-   it in the Keychain.
+   tests, or CI files. Voxi has no cloud credentials at all — a change that adds
+   one needs a very good reason and will be discussed first.
 3. **Design tokens only.** UI changes must use `DesignTokens.swift` /
    `MotionTokens.swift`. If a value isn't in the tokens file, add it there first —
    no magic numbers in views. The full design contract is `docs/design/experience.md`.
