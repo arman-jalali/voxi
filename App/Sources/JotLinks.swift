@@ -17,8 +17,15 @@ import Foundation
 /// Every outbound link in one place, so the About panel, the Settings pane and
 /// the docs can never drift apart.
 enum JotLinks {
-    static let author = URL(string: "https://x.com/ammaar")!
-    static let repository = URL(string: "https://github.com/ammaarreshi/jot")!
-    static let issues = URL(string: "https://github.com/ammaarreshi/jot/issues")!
-    static let privacy = URL(string: "https://github.com/ammaarreshi/jot/blob/main/docs/PRIVACY.md")!
+    /// Voxi's own repository. nil hides the Source / Report-a-bug links in About
+    /// rather than pointing bug reports at the upstream project.
+    static let repository: URL? = nil
+    static var issues: URL? { repository?.appendingPathComponent("issues") }
+    static var privacy: URL? { repository?.appendingPathComponent("blob/main/docs/PRIVACY.md") }
+
+    /// Upstream: Jot by Ammaar Reshi, which Voxi is a fork of.
+    static let upstreamAuthor = URL(string: "https://x.com/ammaar")!
+    static let upstream = URL(string: "https://github.com/google-gemini/jot-gemini-transcribe-macOS")!
+    /// The model Voxi runs.
+    static let model = URL(string: "https://huggingface.co/mistralai/Voxtral-Mini-4B-Realtime-2602")!
 }

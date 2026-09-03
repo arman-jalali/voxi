@@ -26,7 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
             .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
         if !others.isEmpty {
-            Log.session.warning("another Jot instance is already running — quitting this one")
+            Log.session.warning("another Voxi instance is already running — quitting this one")
             NSApp.terminate(nil)
             return
         }
@@ -76,7 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Replay any jot:// URL that cold-launched the app.
         for url in pendingLaunchURLs { dispatch(url) }
         pendingLaunchURLs.removeAll()
-        Log.session.info("Jot launched (build \(Bundle.main.buildNumber, privacy: .public))")
+        Log.session.info("Voxi launched (build \(Bundle.main.buildNumber, privacy: .public))")
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }

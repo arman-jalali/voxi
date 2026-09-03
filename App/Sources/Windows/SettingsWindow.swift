@@ -133,7 +133,7 @@ private struct MainView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("Jot")
+            Text("Voxi")
                 .font(JotUI.TypeScale.title())
                 .padding(.horizontal, 14)
                 .padding(.top, 20)
@@ -253,7 +253,7 @@ struct GeneralPane: View {
             }
 
             Section {
-                Toggle("Start Jot at login", isOn: $launchAtLogin)
+                Toggle("Start Voxi at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, enabled in
                         // The failure-path revert below re-enters onChange with the
                         // inverted value — this guard stops the bounce from calling
@@ -465,7 +465,7 @@ struct AboutPane: View {
                     .accessibilityHidden(true)
             }
             VStack(spacing: 4) {
-                Text("Jot")
+                Text("Voxi")
                     .font(JotUI.TypeScale.display())
                     .foregroundStyle(JotUI.Colors.onSurface)
                 Text(version)
@@ -473,20 +473,28 @@ struct AboutPane: View {
                     .foregroundStyle(JotUI.Colors.onSurfaceVariant)
             }
             HStack(spacing: 4) {
-                Text("Created by")
+                Text("Local dictation with")
                     .foregroundStyle(JotUI.Colors.onSurfaceVariant)
-                Link("Ammaar Reshi", destination: JotLinks.author)
+                Link("Voxtral", destination: JotLinks.model)
+                Text("· a fork of")
+                    .foregroundStyle(JotUI.Colors.onSurfaceVariant)
+                Link("Jot", destination: JotLinks.upstream)
+                Text("by")
+                    .foregroundStyle(JotUI.Colors.onSurfaceVariant)
+                Link("Ammaar Reshi", destination: JotLinks.upstreamAuthor)
             }
             .font(JotUI.TypeScale.body())
 
-            HStack(spacing: JotUI.Spacing.m) {
-                Link("Source", destination: JotLinks.repository)
-                Link("Privacy", destination: JotLinks.privacy)
-                Link("Report a bug", destination: JotLinks.issues)
+            if let repo = JotLinks.repository, let privacy = JotLinks.privacy, let issues = JotLinks.issues {
+                HStack(spacing: JotUI.Spacing.m) {
+                    Link("Source", destination: repo)
+                    Link("Privacy", destination: privacy)
+                    Link("Report a bug", destination: issues)
+                }
+                .font(JotUI.TypeScale.body())
             }
-            .font(JotUI.TypeScale.body())
 
-            Text("Open source under the Apache License 2.0.\nThis is not an officially supported Google product.")
+            Text("Open source under the Apache License 2.0. Everything runs on this Mac.\nNot affiliated with Google or Mistral AI.")
                 .font(JotUI.TypeScale.labelSmall())
                 .foregroundStyle(JotUI.Colors.onSurfaceVariant)
                 .multilineTextAlignment(.center)

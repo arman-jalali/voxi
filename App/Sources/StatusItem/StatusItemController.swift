@@ -53,7 +53,7 @@ final class StatusItemController: NSObject {
         super.init()
 
         statusItem.button?.image = Self.glyph(barHeights: Self.idleBars, dimmed: false)
-        statusItem.button?.toolTip = "Jot"
+        statusItem.button?.toolTip = "Voxi"
         statusItem.menu = makeMenu()
     }
 
@@ -176,11 +176,11 @@ final class StatusItemController: NSObject {
 
         menu.addItem(.separator())
 
-        let about = NSMenuItem(title: "About Jot", action: #selector(openAbout), keyEquivalent: "")
+        let about = NSMenuItem(title: "About Voxi", action: #selector(openAbout), keyEquivalent: "")
         about.target = self
         menu.addItem(about)
 
-        let quit = NSMenuItem(title: "Quit Jot", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "Quit Voxi", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
 
         return menu
