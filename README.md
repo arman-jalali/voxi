@@ -90,8 +90,9 @@ five minutes and one command each for the model and the app.
 ```bash
 git clone https://github.com/arman-jalali/voxi.git
 cd voxi
-./scripts/install-server.sh   # Python venv + Voxtral weights (~2.7 GB, one-time download)
-./scripts/build-app.sh        # builds and installs /Applications/Voxi.app
+./scripts/install-server.sh          # Python venv + Voxtral weights (~2.7 GB, one-time download)
+./scripts/make-signing-identity.sh   # once: local signing cert so permissions survive rebuilds
+./scripts/build-app.sh               # builds and installs /Applications/Voxi.app
 open /Applications/Voxi.app
 ```
 
@@ -105,9 +106,14 @@ Setup takes about two minutes and the app walks you through it:
    app doesn't notice, quit and reopen it.
 4. **Hold the key and talk.**
 
-> **Rebuilding?** Voxi is ad-hoc signed, so every new build is a new identity to
-> macOS: after `build-app.sh`, remove the old *Voxi* row under Privacy & Security
-> → Accessibility and Microphone, and add the app again.
+> **Why the signing step?** macOS ties permission grants to an app's code
+> signature. Without a certificate, each build is signed by its own hash — a new
+> app to macOS — and the Accessibility/Microphone grants you gave the previous
+> build silently stop applying while their rows still sit in System Settings.
+> `make-signing-identity.sh` creates a self-signed certificate in your login
+> keychain (it asks for your password once) and `build-app.sh` signs with it
+> from then on, so grants survive rebuilds. If you skip it, after every rebuild
+> you must remove the stale *Voxi* rows and add the app again.
 
 ## How it works
 
@@ -159,7 +165,7 @@ A few decisions worth knowing about, because they are what make it feel solid:
 | `python3: command not found` or Python < 3.11 | `brew install python` |
 | `external macro implementation type 'PreviewsMacros...'` | a dependency with `#Preview` built under CLT — `Vendor/KeyboardShortcuts` already has these stripped; don't swap it for the upstream package |
 | pill says *Local model isn't running* | run `~/Library/Application\ Support/Voxi/server.sh` and read its output |
-| Accessibility granted but not detected | stale row from a previous build — remove it, add the app again, relaunch |
+| Accessibility granted but not detected | stale row from a previous ad-hoc build — remove it, add the app again, relaunch; run `make-signing-identity.sh` so it stops recurring |
 
 ```
 App/            menu bar item, HUD pill, windows, design tokens, icon + sounds
