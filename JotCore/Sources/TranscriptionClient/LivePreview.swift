@@ -88,13 +88,17 @@ public final class LivePreview: @unchecked Sendable {
             }
         }
         guard let task else { return nil }
-        let deadline = Task<String?, Never> {
-            try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-            return nil
-        }
+        // Both racers must be CHILD tasks so cancelAll() actually stops the
+        // loser. An earlier version awaited a separate Task for the deadline;
+        // cancelling the child didn't cancel that sleep, and since a task group
+        // waits for all children before returning, every dictation paid the
+        // full timeout even when the stream result was already in hand.
         return await withTaskGroup(of: String?.self) { group in
             group.addTask { await task.value }
-            group.addTask { await deadline.value }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                return nil
+            }
             let first = await group.next() ?? nil
             group.cancelAll()
             return first

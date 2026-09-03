@@ -19,6 +19,7 @@ import tempfile
 import threading
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MODEL = os.environ.get("VOXI_MODEL", "mlx-community/Voxtral-Mini-4B-Realtime-6bit")
@@ -39,9 +40,16 @@ print(f"[voxi-server] model loaded in {time.time() - t0:.1f}s", flush=True)
 
 
 SAMPLE_RATE = 16000
-# MLX work is single-GPU: every model call (batch or stream) takes this lock so
-# concurrent HTTP threads never interleave inside the model.
-_model_lock = threading.Lock()
+# ALL model work runs on this one worker thread, whichever HTTP thread asks.
+# Two reasons: MLX work is single-GPU and must not interleave, and MLX state
+# built on one thread must not be evaluated from another — with a threaded
+# server, a session fed on connection A and finished on connection B raised
+# inside mx.eval. HTTP threads just wait on the future.
+_model_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mlx")
+
+
+def on_model_thread(fn, *args):
+    return _model_worker.submit(fn, *args).result()
 
 
 def transcribe_file(path: str) -> str:
@@ -56,11 +64,12 @@ def transcribe_file(path: str) -> str:
         audio = np.interp(np.linspace(0, len(audio) - 1, n_out), np.arange(len(audio)), audio).astype(np.float32)
     pcm = (np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes()
     step = SAMPLE_RATE * 2 * 5  # 5s per feed keeps peak memory flat on long files
-    with _model_lock:
+    def run():
         session = StreamSession(model, sp)
         for i in range(0, len(pcm), step):
             session.feed(pcm[i:i + step])
         return session.finish()
+    return on_model_thread(run)
 
 
 # --- live preview sessions -------------------------------------------------
@@ -73,7 +82,7 @@ _stream = None
 def stream_start():
     global _stream
     with _stream_lock:
-        _stream = StreamSession(model, sp)
+        _stream = on_model_thread(StreamSession, model, sp)
     return {"ok": True}
 
 
@@ -82,8 +91,7 @@ def stream_feed(pcm: bytes):
         s = _stream
     if s is None:
         return {"error": "no active session"}, 409
-    with _model_lock:
-        return {"text": s.feed(pcm)}, 200
+    return {"text": on_model_thread(s.feed, pcm)}, 200
 
 
 def stream_finish():
@@ -92,8 +100,7 @@ def stream_finish():
         s, _stream = _stream, None
     if s is None:
         return {"error": "no active session"}, 409
-    with _model_lock:
-        return {"text": s.finish()}, 200
+    return {"text": on_model_thread(s.finish)}, 200
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -115,9 +122,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):  # noqa: N802
         length = int(self.headers.get("Content-Length", 0))
+        t_req = time.time()
+        stamp = time.strftime("%H:%M:%S") + f".{int((t_req % 1) * 1000):03d}"
         if self.path == "/stream/start":
             self.rfile.read(length) if length > 0 else None
             self._json(200, stream_start())
+            print(f"[{stamp}] stream/start", flush=True)
             return
         if self.path == "/stream/audio":
             pcm = self.rfile.read(length) if length > 0 else b""
@@ -127,6 +137,7 @@ class Handler(BaseHTTPRequestHandler):
                 traceback.print_exc()
                 payload, code = {"error": str(e)}, 500
             self._json(code, payload)
+            print(f"[{stamp}] stream/audio {len(pcm) / 32000:.2f}s audio -> {len(payload.get('text', ''))} chars in {(time.time() - t_req) * 1000:.0f} ms", flush=True)
             return
         if self.path == "/stream/finish":
             self.rfile.read(length) if length > 0 else None
@@ -136,6 +147,7 @@ class Handler(BaseHTTPRequestHandler):
                 traceback.print_exc()
                 payload, code = {"error": str(e)}, 500
             self._json(code, payload)
+            print(f"[{stamp}] stream/finish -> {len(payload.get('text', ''))} chars in {(time.time() - t_req) * 1000:.0f} ms", flush=True)
             return
         if self.path != "/transcribe":
             self._json(404, {"error": "not found"})
@@ -150,7 +162,7 @@ class Handler(BaseHTTPRequestHandler):
             tmp.close()
             t = time.time()
             text = transcribe_file(tmp.name)
-            print(f"[voxi-server] transcribed {length} bytes in {time.time() - t:.2f}s", flush=True)
+            print(f"[{stamp}] transcribe {length / 32000:.1f}s audio -> {len(text)} chars in {time.time() - t:.2f}s", flush=True)
             self._json(200, {"text": text})
         except Exception as e:  # noqa: BLE001
             traceback.print_exc()
@@ -176,7 +188,7 @@ if __name__ == "__main__":
             w.setframerate(16000)
             w.writeframes(struct.pack("<8000h", *([0] * 8000)))  # 0.5s silence
         t = time.time()
-        transcribe_file(warm.name)
+        transcribe_file(warm.name)  # also pins MLX init to the worker thread
         os.unlink(warm.name)
         print(f"[voxi-server] warm-up done in {time.time() - t:.1f}s", flush=True)
     except Exception:
