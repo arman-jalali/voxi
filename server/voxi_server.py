@@ -34,22 +34,23 @@ from voxmlx import SpecialTokenPolicy, load_model, generate, _build_prompt_token
 
 from stream_session import StreamSession  # noqa: E402
 
-model, sp, config = load_model(MODEL)
-prompt_tokens, n_delay_tokens = _build_prompt_tokens(sp)
-print(f"[voxi-server] model loaded in {time.time() - t0:.1f}s", flush=True)
-
-
-SAMPLE_RATE = 16000
-# ALL model work runs on this one worker thread, whichever HTTP thread asks.
-# Two reasons: MLX work is single-GPU and must not interleave, and MLX state
-# built on one thread must not be evaluated from another — with a threaded
-# server, a session fed on connection A and finished on connection B raised
-# inside mx.eval. HTTP threads just wait on the future.
+# ALL model work — loading included — runs on this one worker thread, whichever
+# HTTP thread asks. MLX binds arrays to the stream of the thread that created
+# them ("There is no Stream(gpu, N) in current thread" otherwise), and GPU work
+# must not interleave anyway. HTTP threads just wait on the future.
 _model_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mlx")
 
 
 def on_model_thread(fn, *args):
     return _model_worker.submit(fn, *args).result()
+
+
+model, sp, config = on_model_thread(load_model, MODEL)
+prompt_tokens, n_delay_tokens = _build_prompt_tokens(sp)
+print(f"[voxi-server] model loaded in {time.time() - t0:.1f}s", flush=True)
+
+
+SAMPLE_RATE = 16000
 
 
 def transcribe_file(path: str) -> str:
@@ -126,8 +127,13 @@ class Handler(BaseHTTPRequestHandler):
         stamp = time.strftime("%H:%M:%S") + f".{int((t_req % 1) * 1000):03d}"
         if self.path == "/stream/start":
             self.rfile.read(length) if length > 0 else None
-            self._json(200, stream_start())
-            print(f"[{stamp}] stream/start", flush=True)
+            try:
+                payload, code = stream_start(), 200
+            except Exception as e:  # noqa: BLE001
+                traceback.print_exc()
+                payload, code = {"error": str(e)}, 500
+            self._json(code, payload)
+            print(f"[{stamp}] stream/start -> {code}", flush=True)
             return
         if self.path == "/stream/audio":
             pcm = self.rfile.read(length) if length > 0 else b""
