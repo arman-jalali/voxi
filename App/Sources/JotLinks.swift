@@ -19,7 +19,7 @@ import Foundation
 enum JotLinks {
     /// Voxi's own repository. nil hides the Source / Report-a-bug links in About
     /// rather than pointing bug reports at the upstream project.
-    static let repository: URL? = nil
+    static let repository: URL? = URL(string: "https://github.com/arman-jalali/voxi")
     static var issues: URL? { repository?.appendingPathComponent("issues") }
     static var privacy: URL? { repository?.appendingPathComponent("blob/main/docs/PRIVACY.md") }
 
