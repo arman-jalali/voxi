@@ -50,16 +50,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-# Sign with the local identity from scripts/make-signing-identity.sh when it
-# exists: permissions then survive rebuilds. Ad-hoc ("-") otherwise, which
-# means every rebuild is a new app to macOS and grants must be redone.
-IDENTITY="Voxi Local Signing"
-if security find-identity -v -p codesigning 2>/dev/null | grep -q "\"$IDENTITY\""; then
-  SIGN="$IDENTITY"
-else
-  SIGN="-"
-fi
-codesign --force --sign "$SIGN" --entitlements App/Jot.entitlements "$APP"
+# Ad-hoc signed: no Apple account needed. macOS ties permission grants to the
+# signature, so each build is a new app to it — re-grant after installing.
+codesign --force --sign - --entitlements App/Jot.entitlements "$APP"
 
 INSTALL="/Applications/Voxi.app"
 # Quit a running copy so the bundle can be replaced. Every step here may
@@ -74,9 +67,4 @@ ditto "$APP" "$INSTALL"
 rm -rf "$ROOT/.build/staging"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$INSTALL" >/dev/null 2>&1 || true
 echo "Installed $INSTALL"
-if [ "$SIGN" = "-" ]; then
-  echo "Signed ad-hoc: this build is a NEW app to macOS — re-grant Accessibility and Microphone."
-  echo "To stop that happening on every rebuild, run ./scripts/make-signing-identity.sh once."
-else
-  echo "Signed with \"$IDENTITY\" — existing permission grants carry over."
-fi
+echo "New build = new app to macOS: re-grant Accessibility and Microphone (remove the old Voxi rows first)."

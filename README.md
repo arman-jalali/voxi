@@ -155,13 +155,10 @@ A few decisions worth knowing about, because they are what make it feel solid:
 ./scripts/test.sh             # swift test on JotCore
 ```
 
-**Rebuilding often?** macOS ties permission grants to an app's code signature,
-and an ad-hoc build is signed by its own hash — so after each rebuild the
-Accessibility/Microphone grants belong to the previous build and you must remove
-the stale *Voxi* rows and add the app again. Optional fix for developers:
-`./scripts/make-signing-identity.sh` creates a local self-signed certificate
-once (asks for your password) and `build-app.sh` then signs with it, so grants
-survive rebuilds. First-time users don't need this.
+**After every rebuild, re-grant permissions.** macOS ties grants to an app's
+code signature, and an ad-hoc build is signed by its own hash — so each build
+is a new app to macOS. Remove the stale *Voxi* rows under Privacy & Security →
+Accessibility and Microphone, add the app again, and relaunch it.
 
 | Symptom | Cause |
 | --- | --- |
@@ -169,7 +166,7 @@ survive rebuilds. First-time users don't need this.
 | `python3: command not found` or Python < 3.11 | `brew install python` |
 | `external macro implementation type 'PreviewsMacros...'` | a dependency with `#Preview` built under CLT — `Vendor/KeyboardShortcuts` already has these stripped; don't swap it for the upstream package |
 | pill says *Local model isn't running* | run `~/Library/Application\ Support/Voxi/server.sh` and read its output |
-| Accessibility granted but not detected | stale row from a previous ad-hoc build — remove it, add the app again, relaunch; run `make-signing-identity.sh` so it stops recurring |
+| Accessibility granted but not detected | stale row from a previous build — remove it, add the app again, relaunch |
 
 ```
 App/            menu bar item, HUD pill, windows, design tokens, icon + sounds
